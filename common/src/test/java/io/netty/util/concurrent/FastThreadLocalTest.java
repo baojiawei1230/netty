@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -18,21 +18,41 @@ package io.netty.util.concurrent;
 
 import io.netty.util.internal.ObjectCleaner;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class FastThreadLocalTest {
     @Before
     public void setUp() {
         FastThreadLocal.removeAll();
         assertThat(FastThreadLocal.size(), is(0));
+    }
+
+    @Test
+    public void testGetIfExists() {
+        FastThreadLocal<Boolean> threadLocal = new FastThreadLocal<Boolean>() {
+            @Override
+            protected Boolean initialValue() {
+                return Boolean.TRUE;
+            }
+        };
+
+        assertNull(threadLocal.getIfExists());
+        assertTrue(threadLocal.get());
+        assertTrue(threadLocal.getIfExists());
+
+        FastThreadLocal.removeAll();
+        assertNull(threadLocal.getIfExists());
     }
 
     @Test(timeout = 10000)
@@ -47,7 +67,7 @@ public class FastThreadLocalTest {
 
         // Initialize a thread-local variable.
         assertThat(var.get(), is(nullValue()));
-        assertThat(FastThreadLocal.size(), is(2));
+        assertThat(FastThreadLocal.size(), is(1));
 
         // And then remove it.
         FastThreadLocal.removeAll();
@@ -96,13 +116,13 @@ public class FastThreadLocalTest {
         thread.start();
         thread.join();
 
-        assertEquals(1, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
+        assertEquals(0, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
 
         Thread thread2 = new Thread(runnable);
         thread2.start();
         thread2.join();
 
-        assertEquals(2, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
+        assertEquals(0, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
     }
 
     @Test
@@ -128,13 +148,13 @@ public class FastThreadLocalTest {
         thread.start();
         thread.join();
 
-        assertEquals(2, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
+        assertEquals(0, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
 
         Thread thread2 = new Thread(runnable);
         thread2.start();
         thread2.join();
 
-        assertEquals(4, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
+        assertEquals(0, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
     }
 
     @Test(timeout = 4000)
@@ -142,6 +162,7 @@ public class FastThreadLocalTest {
         testOnRemoveCalled(true, true);
     }
 
+    @Ignore("onRemoval(...) not called with non FastThreadLocal")
     @Test(timeout = 4000)
     public void testOnRemoveCalledForNonFastThreadLocalGet() throws Exception {
         testOnRemoveCalled(false, true);
@@ -152,6 +173,7 @@ public class FastThreadLocalTest {
         testOnRemoveCalled(true, false);
     }
 
+    @Ignore("onRemoval(...) not called with non FastThreadLocal")
     @Test(timeout = 4000)
     public void testOnRemoveCalledForNonFastThreadLocalSet() throws Exception {
         testOnRemoveCalled(false, false);

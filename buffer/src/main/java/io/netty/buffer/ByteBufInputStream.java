@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -16,6 +16,8 @@
 package io.netty.buffer;
 
 import io.netty.util.ReferenceCounted;
+import io.netty.util.internal.ObjectUtil;
+import io.netty.util.internal.StringUtil;
 
 import java.io.DataInput;
 import java.io.DataInputStream;
@@ -101,9 +103,7 @@ public class ByteBufInputStream extends InputStream implements DataInput {
      *            {@code writerIndex}
      */
     public ByteBufInputStream(ByteBuf buffer, int length, boolean releaseOnClose) {
-        if (buffer == null) {
-            throw new NullPointerException("buffer");
-        }
+        ObjectUtil.checkNotNull(buffer, "buffer");
         if (length < 0) {
             if (releaseOnClose) {
                 buffer.release();
@@ -150,8 +150,9 @@ public class ByteBufInputStream extends InputStream implements DataInput {
         return endIndex - buffer.readerIndex();
     }
 
+    // Suppress a warning since the class is not thread-safe
     @Override
-    public void mark(int readlimit) {
+    public void mark(int readlimit) {   // lgtm[java/non-sync-override]
         buffer.markReaderIndex();
     }
 
@@ -162,7 +163,8 @@ public class ByteBufInputStream extends InputStream implements DataInput {
 
     @Override
     public int read() throws IOException {
-        if (!buffer.isReadable()) {
+        int available = available();
+        if (available == 0) {
             return -1;
         }
         return buffer.readByte() & 0xff;
@@ -180,8 +182,9 @@ public class ByteBufInputStream extends InputStream implements DataInput {
         return len;
     }
 
+    // Suppress a warning since the class is not thread-safe
     @Override
-    public void reset() throws IOException {
+    public void reset() throws IOException {    // lgtm[java/non-sync-override]
         buffer.resetReaderIndex();
     }
 
@@ -202,7 +205,8 @@ public class ByteBufInputStream extends InputStream implements DataInput {
 
     @Override
     public byte readByte() throws IOException {
-        if (!buffer.isReadable()) {
+        int available = available();
+        if (available == 0) {
             throw new EOFException();
         }
         return buffer.readByte();
@@ -240,34 +244,42 @@ public class ByteBufInputStream extends InputStream implements DataInput {
         return buffer.readInt();
     }
 
-    private final StringBuilder lineBuf = new StringBuilder();
+    private StringBuilder lineBuf;
 
     @Override
     public String readLine() throws IOException {
-        lineBuf.setLength(0);
+        int available = available();
+        if (available == 0) {
+            return null;
+        }
 
-        loop: while (true) {
-            if (!buffer.isReadable()) {
-                return lineBuf.length() > 0 ? lineBuf.toString() : null;
-            }
+        if (lineBuf != null) {
+            lineBuf.setLength(0);
+        }
 
+        loop: do {
             int c = buffer.readUnsignedByte();
+            --available;
             switch (c) {
                 case '\n':
                     break loop;
 
                 case '\r':
-                    if (buffer.isReadable() && (char) buffer.getUnsignedByte(buffer.readerIndex()) == '\n') {
+                    if (available > 0 && (char) buffer.getUnsignedByte(buffer.readerIndex()) == '\n') {
                         buffer.skipBytes(1);
+                        --available;
                     }
                     break loop;
 
                 default:
+                    if (lineBuf == null) {
+                        lineBuf = new StringBuilder();
+                    }
                     lineBuf.append((char) c);
             }
-        }
+        } while (available > 0);
 
-        return lineBuf.toString();
+        return lineBuf != null && lineBuf.length() > 0 ? lineBuf.toString() : StringUtil.EMPTY_STRING;
     }
 
     @Override

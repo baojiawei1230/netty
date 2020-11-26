@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ * https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -23,6 +23,7 @@ import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.FileRegion;
 import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.internal.logging.InternalLogger;
@@ -67,7 +68,7 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
     static final long DEFAULT_MAX_SIZE = 4 * 1024 * 1024L;
 
     /**
-     * Default minimal time to wait
+     * Default minimal time to wait: 10ms
      */
     static final long MINIMAL_WAIT = 10;
 
@@ -441,11 +442,15 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
                 // Anything else allows the handler to reset the AutoRead
                 if (logger.isDebugEnabled()) {
                     if (config.isAutoRead() && !isHandlerActive(ctx)) {
-                        logger.debug("Unsuspend: " + config.isAutoRead() + ':' +
-                                isHandlerActive(ctx));
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("Unsuspend: " + config.isAutoRead() + ':' +
+                                    isHandlerActive(ctx));
+                        }
                     } else {
-                        logger.debug("Normal unsuspend: " + config.isAutoRead() + ':'
-                                + isHandlerActive(ctx));
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("Normal unsuspend: " + config.isAutoRead() + ':'
+                                    + isHandlerActive(ctx));
+                        }
                     }
                 }
                 channel.attr(READ_SUSPENDED).set(false);
@@ -506,6 +511,16 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
         }
         informReadOperation(ctx, now);
         ctx.fireChannelRead(msg);
+    }
+
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        Channel channel = ctx.channel();
+        if (channel.hasAttr(REOPEN_TASK)) {
+            //release the reopen task
+            channel.attr(REOPEN_TASK).set(null);
+        }
+        super.handlerRemoved(ctx);
     }
 
     /**
@@ -630,7 +645,8 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
     /**
      * Calculate the size of the given {@link Object}.
      *
-     * This implementation supports {@link ByteBuf} and {@link ByteBufHolder}. Sub-classes may override this.
+     * This implementation supports {@link ByteBuf}, {@link ByteBufHolder} and {@link FileRegion}.
+     * Sub-classes may override this.
      * @param msg the msg for which the size should be calculated.
      * @return size the size of the msg or {@code -1} if unknown.
      */
@@ -640,6 +656,9 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
         }
         if (msg instanceof ByteBufHolder) {
             return ((ByteBufHolder) msg).content().readableBytes();
+        }
+        if (msg instanceof FileRegion) {
+            return ((FileRegion) msg).count();
         }
         return -1;
     }

@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -34,9 +34,12 @@ import io.netty.channel.socket.ChannelInputShutdownReadComplete;
 import io.netty.channel.socket.ChannelOutputShutdownEvent;
 import io.netty.channel.socket.DuplexChannel;
 import io.netty.util.UncheckedBooleanSupplier;
+import io.netty.util.internal.PlatformDependent;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -228,6 +231,8 @@ public class SocketHalfClosedTest extends AbstractSocketTest {
 
     @Test
     public void testAutoCloseFalseDoesShutdownOutput() throws Throwable {
+        // This test only works on Linux / BSD / MacOS as we assume some semantics that are not true for Windows.
+        Assume.assumeFalse(PlatformDependent.isWindows());
         run();
     }
 
@@ -327,8 +332,18 @@ public class SocketHalfClosedTest extends AbstractSocketTest {
                     public void operationComplete(ChannelFuture future) throws Exception {
                         future.channel().close().addListener(new ChannelFutureListener() {
                             @Override
-                            public void operationComplete(ChannelFuture future) throws Exception {
-                                followerCloseLatch.countDown();
+                            public void operationComplete(final ChannelFuture future) throws Exception {
+                                // This is a bit racy but there is no better way how to handle this in Java11.
+                                // The problem is that on close() the underlying FD will not actually be closed directly
+                                // but the close will be done after the Selector did process all events. Because of
+                                // this we will need to give it a bit time to ensure the FD is actual closed before we
+                                // count down the latch and try to write.
+                                future.channel().eventLoop().schedule(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        followerCloseLatch.countDown();
+                                    }
+                                }, 200, TimeUnit.MILLISECONDS);
                             }
                         });
                     }

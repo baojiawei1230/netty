@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -21,7 +21,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *     https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -45,9 +45,9 @@ import static io.netty.util.AsciiString.EMPTY_STRING;
 import static io.netty.util.AsciiString.of;
 import static java.lang.Integer.MAX_VALUE;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
@@ -79,7 +79,7 @@ public class HpackDecoderTest {
 
     @Before
     public void setUp() {
-        hpackDecoder = new HpackDecoder(8192, 32);
+        hpackDecoder = new HpackDecoder(8192);
         mockHeaders = mock(Http2Headers.class);
     }
 
@@ -431,15 +431,13 @@ public class HpackDecoderTest {
     }
 
     @Test
-    public void testDecodeLargerThanMaxHeaderListSizeButSmallerThanMaxHeaderListSizeUpdatesDynamicTable()
-            throws Http2Exception {
+    public void testDecodeLargerThanMaxHeaderListSizeUpdatesDynamicTable() throws Http2Exception {
         ByteBuf in = Unpooled.buffer(300);
         try {
-            hpackDecoder.setMaxHeaderListSize(200, 300);
+            hpackDecoder.setMaxHeaderListSize(200);
             HpackEncoder hpackEncoder = new HpackEncoder(true);
 
             // encode headers that are slightly larger than maxHeaderListSize
-            // but smaller than maxHeaderListSizeGoAway
             Http2Headers toEncode = new DefaultHttp2Headers();
             toEncode.add("test_1", "1");
             toEncode.add("test_2", "2");
@@ -447,8 +445,7 @@ public class HpackDecoderTest {
             toEncode.add("test_3", "3");
             hpackEncoder.encodeHeaders(1, in, toEncode, NEVER_SENSITIVE);
 
-            // decode the headers, we should get an exception, but
-            // the decoded headers object should contain all of the headers
+            // decode the headers, we should get an exception
             Http2Headers decoded = new DefaultHttp2Headers();
             try {
                 hpackDecoder.decode(1, in, decoded, true);
@@ -457,8 +454,18 @@ public class HpackDecoderTest {
                 assertTrue(e instanceof Http2Exception.HeaderListSizeException);
             }
 
-            assertEquals(4, decoded.size());
-            assertTrue(decoded.contains("test_3"));
+            // but the dynamic table should have been updated, so that later blocks
+            // can refer to earlier headers
+            in.clear();
+            // 0x80, "indexed header field representation"
+            // index 62, the first (most recent) dynamic table entry
+            in.writeByte(0x80 | 62);
+            Http2Headers decoded2 = new DefaultHttp2Headers();
+            hpackDecoder.decode(1, in, decoded2, true);
+
+            Http2Headers golden = new DefaultHttp2Headers();
+            golden.add("test_3", "3");
+            assertEquals(golden, decoded2);
         } finally {
             in.release();
         }
@@ -468,11 +475,10 @@ public class HpackDecoderTest {
     public void testDecodeCountsNamesOnlyOnce() throws Http2Exception {
         ByteBuf in = Unpooled.buffer(200);
         try {
-            hpackDecoder.setMaxHeaderListSize(3500, 4000);
+            hpackDecoder.setMaxHeaderListSize(3500);
             HpackEncoder hpackEncoder = new HpackEncoder(true);
 
             // encode headers that are slightly larger than maxHeaderListSize
-            // but smaller than maxHeaderListSizeGoAway
             Http2Headers toEncode = new DefaultHttp2Headers();
             toEncode.add(String.format("%03000d", 0).replace('0', 'f'), "value");
             toEncode.add("accept", "value");
@@ -493,7 +499,7 @@ public class HpackDecoderTest {
             String headerName = "12345";
             String headerValue = "56789";
             long headerSize = headerName.length() + headerValue.length();
-            hpackDecoder.setMaxHeaderListSize(headerSize, 100);
+            hpackDecoder.setMaxHeaderListSize(headerSize);
             HpackEncoder hpackEncoder = new HpackEncoder(true);
 
             Http2Headers toEncode = new DefaultHttp2Headers();
@@ -538,7 +544,7 @@ public class HpackDecoderTest {
 
             Http2Headers decoded = new DefaultHttp2Headers();
 
-            expectedException.expect(Http2Exception.class);
+            expectedException.expect(Http2Exception.StreamException.class);
             hpackDecoder.decode(1, in, decoded, true);
         } finally {
             in.release();
@@ -582,7 +588,7 @@ public class HpackDecoderTest {
 
             Http2Headers decoded = new DefaultHttp2Headers();
 
-            expectedException.expect(Http2Exception.class);
+            expectedException.expect(Http2Exception.StreamException.class);
             hpackDecoder.decode(1, in, decoded, true);
         } finally {
             in.release();
@@ -602,7 +608,7 @@ public class HpackDecoderTest {
 
             Http2Headers decoded = new DefaultHttp2Headers();
 
-            expectedException.expect(Http2Exception.class);
+            expectedException.expect(Http2Exception.StreamException.class);
             hpackDecoder.decode(1, in, decoded, true);
         } finally {
             in.release();
@@ -622,10 +628,47 @@ public class HpackDecoderTest {
 
             Http2Headers decoded = new DefaultHttp2Headers();
 
-            expectedException.expect(Http2Exception.class);
+            expectedException.expect(Http2Exception.StreamException.class);
             hpackDecoder.decode(1, in, decoded, true);
         } finally {
             in.release();
+        }
+    }
+
+    @Test
+    public void failedValidationDoesntCorruptHpack() throws Exception {
+        ByteBuf in1 = Unpooled.buffer(200);
+        ByteBuf in2 = Unpooled.buffer(200);
+        try {
+            HpackEncoder hpackEncoder = new HpackEncoder(true);
+
+            Http2Headers toEncode = new DefaultHttp2Headers();
+            toEncode.add(":method", "GET");
+            toEncode.add(":status", "200");
+            toEncode.add("foo", "bar");
+            hpackEncoder.encodeHeaders(1, in1, toEncode, NEVER_SENSITIVE);
+
+            Http2Headers decoded = new DefaultHttp2Headers();
+
+            try {
+                hpackDecoder.decode(1, in1, decoded, true);
+                fail("Should have thrown a StreamException");
+            } catch (Http2Exception.StreamException expected) {
+                assertEquals(1, expected.streamId());
+            }
+
+            // Do it again, this time without validation, to make sure the HPACK state is still sane.
+            decoded.clear();
+            hpackEncoder.encodeHeaders(1, in2, toEncode, NEVER_SENSITIVE);
+            hpackDecoder.decode(1, in2, decoded, false);
+
+            assertEquals(3, decoded.size());
+            assertEquals("GET", decoded.method().toString());
+            assertEquals("200", decoded.status().toString());
+            assertEquals("bar", decoded.get("foo").toString());
+        } finally {
+            in1.release();
+            in2.release();
         }
     }
 }

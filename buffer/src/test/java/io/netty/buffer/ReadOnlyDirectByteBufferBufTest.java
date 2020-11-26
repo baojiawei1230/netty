@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -21,9 +21,8 @@ import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ReadOnlyBufferException;
 import java.nio.channels.FileChannel;
@@ -38,9 +37,68 @@ public class ReadOnlyDirectByteBufferBufTest {
         return ByteBuffer.allocateDirect(size);
     }
 
+    @Test
+    public void testIsContiguous() {
+        ByteBuf buf = buffer(allocate(4).asReadOnlyBuffer());
+        Assert.assertTrue(buf.isContiguous());
+        buf.release();
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void testConstructWithWritable() {
         buffer(allocate(1));
+    }
+
+    @Test
+    public void shouldIndicateNotWritable() {
+        ByteBuf buf = buffer(allocate(8).asReadOnlyBuffer()).clear();
+        try {
+            Assert.assertFalse(buf.isWritable());
+        } finally {
+            buf.release();
+        }
+    }
+
+    @Test
+    public void shouldIndicateNotWritableAnyNumber() {
+        ByteBuf buf = buffer(allocate(8).asReadOnlyBuffer()).clear();
+        try {
+            Assert.assertFalse(buf.isWritable(1));
+        } finally {
+            buf.release();
+        }
+    }
+
+    @Test
+    public void ensureWritableIntStatusShouldFailButNotThrow() {
+        ByteBuf buf = buffer(allocate(8).asReadOnlyBuffer()).clear();
+        try {
+            int result = buf.ensureWritable(1, false);
+            Assert.assertEquals(1, result);
+        } finally {
+            buf.release();
+        }
+    }
+
+    @Test
+    public void ensureWritableForceIntStatusShouldFailButNotThrow() {
+        ByteBuf buf = buffer(allocate(8).asReadOnlyBuffer()).clear();
+        try {
+            int result = buf.ensureWritable(1, true);
+            Assert.assertEquals(1, result);
+        } finally {
+            buf.release();
+        }
+    }
+
+    @Test(expected = ReadOnlyBufferException.class)
+    public void ensureWritableShouldThrow() {
+        ByteBuf buf = buffer(allocate(8).asReadOnlyBuffer()).clear();
+        try {
+            buf.ensureWritable(1);
+        } finally {
+            buf.release();
+        }
     }
 
     @Test(expected = ReadOnlyBufferException.class)
@@ -184,6 +242,20 @@ public class ReadOnlyDirectByteBufferBufTest {
         buf.release();
     }
 
+    @Test(expected = IndexOutOfBoundsException.class)
+    public void testGetBytesByteBuffer() {
+        byte[] bytes = {'a', 'b', 'c', 'd', 'e', 'f', 'g'};
+        // Ensure destination buffer is bigger then what is in the ByteBuf.
+        ByteBuffer nioBuffer = ByteBuffer.allocate(bytes.length + 1);
+        ByteBuf buffer = buffer(((ByteBuffer) allocate(bytes.length)
+                .put(bytes).flip()).asReadOnlyBuffer());
+        try {
+            buffer.getBytes(buffer.readerIndex(), nioBuffer);
+        } finally {
+            buffer.release();
+        }
+    }
+
     @Test
     public void testCopy() {
         ByteBuf buf = buffer(((ByteBuffer) allocate(16).putLong(1).putLong(2).flip()).asReadOnlyBuffer());
@@ -241,12 +313,12 @@ public class ReadOnlyDirectByteBufferBufTest {
         ByteBuf b2 = null;
 
         try {
-            output = new FileOutputStream(file).getChannel();
+            output = new RandomAccessFile(file, "rw").getChannel();
             byte[] bytes = new byte[1024];
             PlatformDependent.threadLocalRandom().nextBytes(bytes);
             output.write(ByteBuffer.wrap(bytes));
 
-            input = new FileInputStream(file).getChannel();
+            input = new RandomAccessFile(file, "r").getChannel();
             ByteBuffer m = input.map(FileChannel.MapMode.READ_ONLY, 0, input.size());
 
             b1 = buffer(m);
